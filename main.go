@@ -4,28 +4,91 @@ package main
 import (
 	"bytes"
 	"github.com/pkg/errors"
-	"log"
+	"github.com/sirupsen/logrus"
+	"github.com/ypapax/logrus_conf"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
-type Process struct {
-	pid int
-	cpu float64
+func slackInline(stack []byte) string {
+	return strings.Join(strings.Split(string(stack), "\n"), "=====")
 }
 
 func main() {
-	percent, err := cpuUsage()
-	if err != nil {
-		log.Printf("error: %+v\n", err)
+	if err := logrus_conf.PrepareFromEnv("cpu_usage"); err != nil {
+		logrus.Errorf("%+v", err)
 		return
 	}
-	log.Println("cpu usage: ", percent)
+	go CpuUsageInit()
+	for {
+		SleepByCpuUsage(time.Second, 10*time.Second)
+	}
+}
+
+var (
+	latestCpuUsagePercent    float64
+	latestCpuUsagePercentMtx sync.RWMutex
+)
+
+func SleepByCpuUsage(minSl, maxSl time.Duration) {
+	s := SleepValueByCpuUsagePercent(minSl, maxSl)
+	logrus.Infof("sleeping for %+v, stack: %+v", s, slackInline(debug.Stack()))
+	time.Sleep(s)
+}
+
+func SleepValueByCpuUsagePercent(minSl, maxSl time.Duration) (sleepByCpuUsagePerc time.Duration) {
+	currentCpuUsage := func() float64 {
+		latestCpuUsagePercentMtx.RLock()
+		defer latestCpuUsagePercentMtx.RUnlock()
+		return latestCpuUsagePercent
+	}()
+	defer func() {
+		logrus.Tracef("sleepByCpuUsagePerc: %+v for currentCpuUsage: %+v ", sleepByCpuUsagePerc, currentCpuUsage)
+	}()
+	if currentCpuUsage == 0 {
+		return minSl
+	}
+	const (
+		minPercent = 0
+		maxPercent = 100
+	)
+	sleepByCpuUsagePerc = time.Duration(currentCpuUsage) * (maxSl - minSl) / time.Duration(maxPercent-minPercent)
+	return sleepByCpuUsagePerc
+}
+
+
+func CpuUsageInit() {
+	//logrus.Infof("starting")
+	sl := time.Second
+	for {
+		func() {
+			defer func() {
+				//logrus.Infof("sleeping for %+v", sl)
+				time.Sleep(sl)
+			}()
+			//logrus.Infof("before getting cpu usage")
+			perc, err := cpuUsage()
+			if err != nil {
+				logrus.Errorf("couldn't get cpu usage %+v", errors.WithStack(err))
+				return
+			}
+			func() {
+				latestCpuUsagePercentMtx.Lock()
+				defer latestCpuUsagePercentMtx.Unlock()
+				latestCpuUsagePercent = perc
+			}()
+			logrus.Tracef("latestCpuUsagePercent is changed to %+v", latestCpuUsagePercent)
+		}()
+	}
 }
 
 func cpuUsage() (percent float64, finalErr error) {
+	logrus.Tracef("starting")
 	defer func() {
 		if r := recover(); r != nil {
 			finalErr = errors.Errorf("panic is catched: %+v", r)
@@ -40,7 +103,7 @@ func cpuUsage() (percent float64, finalErr error) {
 	if err != nil {
 		return 0, errors.WithStack(err)
 	}
-	processes := make([]*Process, 0)
+	processes := make([]*process, 0)
 	for {
 		line, errR := out.ReadString('\n')
 		if errR != nil {
@@ -62,7 +125,7 @@ func cpuUsage() (percent float64, finalErr error) {
 		if errR != nil {
 			return 0, errors.WithStack(err)
 		}
-		processes = append(processes, &Process{pid, cpu})
+		processes = append(processes, &process{pid, cpu})
 	}
 	var cpuSum float64
 	for _, p := range processes {
@@ -74,4 +137,9 @@ func cpuUsage() (percent float64, finalErr error) {
 	usage := cpuSum / float64(runtime.NumCPU())
 	//log.Println("cpu usage: ", usage)
 	return usage, nil
+}
+
+type process struct {
+	pid int
+	cpu float64
 }
