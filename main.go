@@ -6,10 +6,9 @@ import (
 	"github.com/pkg/errors"
 	"log"
 	"os/exec"
-	runtime "runtime"
+	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Process struct {
@@ -26,9 +25,14 @@ func main() {
 	log.Println("cpu usage: ", percent)
 }
 
-func cpuUsage() (float64, error) {
-	t1 := time.Now()
-	log.SetFlags(log.Llongfile | log.LstdFlags)
+func cpuUsage() (percent float64, finalErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			finalErr = errors.Errorf("panic is catched: %+v", r)
+		}
+	}()
+	//t1 := time.Now()
+	//log.SetFlags(log.Llongfile | log.LstdFlags)
 	cmd := exec.Command("ps", "aux")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -49,7 +53,7 @@ func cpuUsage() (float64, error) {
 				ft = append(ft, t)
 			}
 		}
-		log.Println(len(ft), ft)
+		//log.Println(len(ft), ft)
 		pid, errR := strconv.Atoi(ft[1])
 		if errR != nil {
 			continue
@@ -65,9 +69,9 @@ func cpuUsage() (float64, error) {
 		//log.Println("Process ", p.pid, " takes ", p.cpu, " % of the CPU")
 		cpuSum += p.cpu
 	}
-	log.Printf("sum: %+v, time spent: %+v \n", cpuSum, time.Since(t1))
-	log.Println("The number of CPU Cores:", runtime.NumCPU())
-	usage := cpuSum/float64(runtime.NumCPU())
-	log.Println("cpu usage: ", usage)
+	//log.Printf("sum: %+v, time spent: %+v \n", cpuSum, time.Since(t1))
+	//log.Println("The number of CPU Cores:", runtime.NumCPU())
+	usage := cpuSum / float64(runtime.NumCPU())
+	//log.Println("cpu usage: ", usage)
 	return usage, nil
 }
