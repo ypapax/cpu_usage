@@ -26,7 +26,9 @@ func main() {
 	}
 	go CpuUsageInit()
 	for {
-		SleepByCpuUsage(time.Second, 10*time.Second)
+		SleepByCpuUsage(time.Second, 10*time.Second, 10)
+		SleepByCpuUsage(10 * time.Millisecond, 10*time.Second, 80)
+		SleepByCpuUsage(time.Second, 10*time.Second, 80)
 	}
 }
 
@@ -35,13 +37,13 @@ var (
 	latestCpuUsagePercentMtx sync.RWMutex
 )
 
-func SleepByCpuUsage(minSl, maxSl time.Duration) {
-	s := SleepValueByCpuUsagePercent(minSl, maxSl)
+func SleepByCpuUsage(minSl, maxSl time.Duration, minPercentWhenReact float64) {
+	s := SleepValueByCpuUsagePercent(minSl, maxSl, minPercentWhenReact)
 	logrus.Infof("sleeping for %+v, stack: %+v", s, slackInline(debug.Stack()))
 	time.Sleep(s)
 }
 
-func SleepValueByCpuUsagePercent(minSl, maxSl time.Duration) (sleepByCpuUsagePerc time.Duration) {
+func SleepValueByCpuUsagePercent(minSl, maxSl time.Duration, minPercentWhenReact float64) (sleepByCpuUsagePerc time.Duration) {
 	currentCpuUsage := func() float64 {
 		latestCpuUsagePercentMtx.RLock()
 		defer latestCpuUsagePercentMtx.RUnlock()
@@ -50,7 +52,7 @@ func SleepValueByCpuUsagePercent(minSl, maxSl time.Duration) (sleepByCpuUsagePer
 	defer func() {
 		logrus.Tracef("sleepByCpuUsagePerc: %+v for currentCpuUsage: %+v ", sleepByCpuUsagePerc, currentCpuUsage)
 	}()
-	if currentCpuUsage == 0 {
+	if currentCpuUsage < minPercentWhenReact {
 		return minSl
 	}
 	const (
